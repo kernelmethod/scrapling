@@ -29,22 +29,4 @@ func main() {
 		maxDepth,
 		crawlExternalDomains,
 	)
-
-	/*
-		resp, err := http.Get(flag.Arg(0))
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer resp.Body.Close()
-
-		doc, err := html.Parse(resp.Body)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		hrefs := extractHrefs(doc)
-		for _, u := range hrefs {
-			fmt.Println(u)
-		}
-	*/
 }
