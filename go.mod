@@ -1,4 +1,4 @@
-module github.com/kernelmethod/scraling
+module github.com/kernelmethod/scrapling
 
 go 1.15
 
