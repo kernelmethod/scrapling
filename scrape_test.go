@@ -3,33 +3,60 @@
 package main
 
 import (
+	"golang.org/x/net/html"
 	"net/url"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
-func TestConvertPath(t *testing.T) {
-	test := func(href string, base *url.URL, expectedResult string) {
-		result, err := convertPath(href, base)
+func TestExtractHrefs(t *testing.T) {
+	test := func(content string, baseURL *url.URL, expectedResults []string) {
+		doc, err := html.Parse(strings.NewReader(content))
 		if err != nil {
-			t.Errorf("convertPath error: %s", err)
+			t.Errorf("%s", err)
 		}
-		if result != expectedResult {
-			t.Errorf(
-				"convertPath(\"%s\", url.Parse(\"%s\")) == \"%s\" != \"%s\"",
-				href, base, result, expectedResult,
-			)
+
+		results := extractHrefs(doc, baseURL)
+		sort.Strings(results)
+		sort.Strings(expectedResults)
+
+		if !reflect.DeepEqual(results, expectedResults) {
+			t.Errorf("%s != %s", results, expectedResults)
 		}
 	}
 
-	base, _ := url.Parse("https://www.example.org/foo")
+	content := `
+	<a href="https://www.example.org/foo">hello, world!</a>
+	<a href="/bar">goodbye!</a>
+	<img src="https://www.example.org/my/img">
+	`
+	baseURL, _ := url.Parse("https://www.example.org")
+	hrefs := []string{"https://www.example.org/foo", "https://www.example.org/bar"}
+	test(content, baseURL, hrefs)
 
-	// Case 1: the href is a full URL. In this case convertPath should do
-	// nothing to the href
-	test("https://www.example.com/bar", base, "https://www.example.com/bar")
-
-	// Case 2: the href is an absolute path
-	test("/bar", base, "https://www.example.org/bar")
-
-	// Case 3: TODO: the href is a relative path
-	// test("./bar", base, "https://www.example.org/foo/bar")
+	content = `
+	<!doctype html>
+	<html>
+		<body>
+			<p>Welcome to <a href="/">my home page!</a></p>
+			<p>Here's a list of some of my favorite links:</p>
+			<ul>
+				<li><a href="https://www.google.com">My favorite search engine</a></li>
+				<li><a href="/about">About me!</a></li>
+				<li><a href="file:///etc/passwd">My favorite file :)</a></li>
+			</ul>
+			<p>And <a href="mailto:foobar@example.org">here's my email address!</a></p>
+		</body>
+	</html>
+	`
+	hrefs = []string{
+		"https://www.google.com",
+		"https://www.example.org/",
+		"https://www.example.org/about",
+		"file:///etc/passwd",
+		"mailto:foobar@example.org",
+	}
+	test(content, baseURL, hrefs)
 }

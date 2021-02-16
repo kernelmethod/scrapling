@@ -7,22 +7,6 @@ import (
 	"net/url"
 )
 
-// Convert an absolute or relative path into a full URL
-func convertPath(href string, base *url.URL) (string, error) {
-	parsedHref, err := url.Parse(href)
-	if err != nil {
-		return "", err
-	}
-
-	// If the scheme is empty, then the href must be an absolute
-	// or relative path
-	if parsedHref.Scheme == "" {
-		return base.ResolveReference(parsedHref).String(), nil
-	} else {
-		return parsedHref.String(), nil
-	}
-}
-
 // Extract all hrefs from <a>...</a> tags within an HTML response.
 func extractHrefs(node *html.Node, base *url.URL) []string {
 	var hrefs = []string{}
@@ -32,12 +16,14 @@ func extractHrefs(node *html.Node, base *url.URL) []string {
 	if node.Type == html.ElementNode && node.Data == "a" {
 		for _, attr := range node.Attr {
 			if attr.Key == "href" {
-				href, err := convertPath(attr.Val, base)
+				parsedHref, err := url.Parse(attr.Val)
 				if err != nil {
 					// For some reason we experienced an error trying to parse this href,
-					// so we skip over it
+					// so we just skip over it instead
 					break
 				}
+
+				href := base.ResolveReference(parsedHref).String()
 				hrefs = append(hrefs, href)
 			}
 		}
