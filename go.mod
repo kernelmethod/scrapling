@@ -3,6 +3,6 @@ module github.com/kernelmethod/scraling
 go 1.15
 
 require (
-	github.com/PuerkitoBio/goquery v1.6.1
-	golang.org/x/net v0.0.0-20200202094626-16171245cfb2
+	github.com/seiflotfy/cuckoofilter v0.0.0-20201222105146-bc6005554a0c
+	golang.org/x/net v0.0.0-20210119194325-5f4716e94777
 )
