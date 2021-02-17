@@ -10,13 +10,6 @@ import (
 	"sync"
 )
 
-// Encapsulates a single task that must be completed by the worker
-// goroutines.
-type Task struct {
-	URL   string
-	depth int
-}
-
 // A worker that crawls URLs and extracts new links from them
 type Worker struct {
 	originalURL          *url.URL
@@ -44,13 +37,7 @@ func (w *Worker) HttpGet(base *url.URL) (*http.Response, error) {
 }
 
 func (w *Worker) ScrapeLinks(base *url.URL) ([]string, error) {
-	// Grab the maxRequestsLock semaphore before making the HTTP request
-	// in order to limit the maximum number of concurrent HTTP requests
-	// that are being made
-	w.maxRequestsLock <- struct{}{}
-	resp, err := http.Get(base.String())
-	<-w.maxRequestsLock
-
+	resp, err := w.HttpGet(base)
 	if err != nil {
 		return []string{}, err
 	}
