@@ -21,7 +21,7 @@ type Task struct {
 type Worker struct {
 	originalURL          *url.URL
 	crawlExternalDomains bool
-	tasks                chan Task
+	maxRequestsLock      chan struct{}
 	nTasks               *sync.WaitGroup
 	printedFilter        *cuckoo.Filter
 	printedFilterLock    *sync.Mutex
@@ -29,8 +29,28 @@ type Worker struct {
 	processedFilterLock  *sync.Mutex
 }
 
-func (w *Worker) CrawlURL(base *url.URL) ([]string, error) {
+// Have the worker make a GET request to a URL. Wraps some additional actions, such
+// as grabbing the maxRequestsLock to ensure that we don't run more concurrent HTTP
+// requests than we need.
+func (w *Worker) HttpGet(base *url.URL) (*http.Response, error) {
+	// Grab the maxRequestsLock semaphore
+	w.maxRequestsLock <- struct{}{}
 	resp, err := http.Get(base.String())
+
+	// Release the maxRequestsLock semaphore
+	<-w.maxRequestsLock
+
+	return resp, err
+}
+
+func (w *Worker) ScrapeLinks(base *url.URL) ([]string, error) {
+	// Grab the maxRequestsLock semaphore before making the HTTP request
+	// in order to limit the maximum number of concurrent HTTP requests
+	// that are being made
+	w.maxRequestsLock <- struct{}{}
+	resp, err := http.Get(base.String())
+	<-w.maxRequestsLock
+
 	if err != nil {
 		return []string{}, err
 	}
@@ -57,35 +77,26 @@ func (w *Worker) CrawlURL(base *url.URL) ([]string, error) {
 	return hrefs, nil
 }
 
-func (w *Worker) Crawl() {
-	for {
-		task, ok := <-w.tasks
-
-		if !ok {
-			// Channel has closed, so we can cancel the worker
-			break
-		}
-
-		err := w.HandleTask(&task)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %s\n", task.URL, err)
-		}
-	}
-}
-
-func (w *Worker) HandleTask(task *Task) error {
+func (w *Worker) Crawl(url string, depth int) {
 	// At the end of the function, we signal that we've completed a new task,
 	// regardless of the outcome.
 	defer w.nTasks.Done()
 
+	err := w.HandleTask(url, depth)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error processing %s: %s\n", url, err)
+	}
+}
+
+func (w *Worker) HandleTask(taskURL string, depth int) error {
 	// Skip this URL if we've exceeded the maximum recursion depth
-	if task.depth < 0 {
+	if depth < 0 {
 		return nil
 	}
 
 	// Skip this URL if we've already processed it before
 	w.processedFilterLock.Lock()
-	ok := w.processedFilter.InsertUnique([]byte(task.URL))
+	ok := w.processedFilter.InsertUnique([]byte(taskURL))
 	w.processedFilterLock.Unlock()
 	if !ok {
 		return nil
@@ -95,27 +106,25 @@ func (w *Worker) HandleTask(task *Task) error {
 	// - Ensure that the URL domain is the same as the original domain
 	//   if crawlExternalDomains is false.
 	// - Ensure that the URL scheme is either http or https
-	taskURL, err := url.Parse(task.URL)
+	parsedTaskURL, err := url.Parse(taskURL)
 	ok = (err == nil)
-	ok = ok && (w.crawlExternalDomains || taskURL.Host == w.originalURL.Host)
-	ok = ok && (taskURL.Scheme == "https" || taskURL.Scheme == "http")
+	ok = ok && (w.crawlExternalDomains || parsedTaskURL.Host == w.originalURL.Host)
+	ok = ok && (parsedTaskURL.Scheme == "https" || parsedTaskURL.Scheme == "http")
 	if !ok {
 		return err
 	}
 
 	// Now that all of the checks have passed, we can crawl the URL
-	hrefs, err := w.CrawlURL(taskURL)
+	hrefs, err := w.ScrapeLinks(parsedTaskURL)
 	if err != nil {
 		return err
 	}
 
-	// Add all of the extracted links back onto the task queue
+	// Start new tasks for all of the scraped links
 	w.nTasks.Add(len(hrefs))
-	go func() {
-		for _, u := range hrefs {
-			w.tasks <- Task{u, task.depth - 1}
-		}
-	}()
+	for _, u := range hrefs {
+		go w.Crawl(u, depth-1)
+	}
 
 	return nil
 }
@@ -128,13 +137,11 @@ func RunWorkers(
 ) error {
 
 	var nTasks sync.WaitGroup
-
-	tasks := make(chan Task)
-	nTasks.Add(1)
-	// go func() { tasks <- Task{baseURL, maxDepth} }()
-	go func() { tasks <- Task{baseURL, maxDepth} }()
-
 	var printedFilterLock, processedFilterLock sync.Mutex
+
+	maxRequestsLock := make(chan struct{}, threads)
+
+	nTasks.Add(1)
 	printedFilter := cuckoo.NewFilter(1_000_000)
 	processedFilter := cuckoo.NewFilter(1_000_000)
 	parsedBaseURL, err := url.Parse(baseURL)
@@ -145,22 +152,19 @@ func RunWorkers(
 	worker := Worker{
 		parsedBaseURL,
 		crawlExternalDomains,
-		tasks,
+		maxRequestsLock,
 		&nTasks,
 		printedFilter,
 		&printedFilterLock,
 		processedFilter,
 		&processedFilterLock,
 	}
-	for i := 0; i < threads; i++ {
-		go worker.Crawl()
-	}
+	go worker.Crawl(baseURL, maxDepth)
 
 	// In the primary goroutine, we wait until there are no more
 	// tasks to be completed. Then we signal that the workers can
 	// stop running.
 	nTasks.Wait()
-	close(tasks)
 
 	return nil
 }
