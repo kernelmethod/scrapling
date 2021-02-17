@@ -19,10 +19,13 @@ func main() {
 		log.Fatal("Missing argument: start_url\n")
 	}
 
-	RunWorkers(
+	err := RunWorkers(
 		flag.Arg(0),
 		threads,
 		maxDepth,
 		crawlExternalDomains,
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
