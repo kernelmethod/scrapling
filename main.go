@@ -2,10 +2,7 @@ package main
 
 import (
 	"flag"
-	_ "golang.org/x/net/html"
 	"log"
-	_ "net/http"
-	"os"
 )
 
 var crawlExternalDomains bool
@@ -20,7 +17,6 @@ func main() {
 
 	if flag.NArg() != 1 {
 		log.Fatal("Missing argument: start_url\n")
-		os.Exit(1)
 	}
 
 	RunWorkers(

@@ -69,52 +69,79 @@ func Crawl(
 			break
 		}
 
-		// Skip this URL if we've exceeded the maximum recursion depth
-		if task.depth < 0 {
-			nTasks.Done()
-			continue
-		}
+		err := HandleTask(
+			&task,
+			parsedBaseURL,
+			crawlExternalDomains,
+			tasks,
+			nTasks,
+			printedFilter,
+			printedFilterLock,
+			processedFilter,
+			processedFilterLock,
+		)
 
-		// Skip this URL if we've already processed it before
-		processedFilterLock.Lock()
-		ok = processedFilter.InsertUnique([]byte(task.URL))
-		processedFilterLock.Unlock()
-		if !ok {
-			nTasks.Done()
-			continue
-		}
-
-		// Perform additional checks on the URL that we're about to query
-		// - Ensure that the URL domain is the same as the original domain
-		//   if crawlExternalDomains is false.
-		// - Ensure that the URL scheme is either http or https
-		taskURL, err := url.Parse(task.URL)
-		ok = (err == nil)
-		ok = ok && (crawlExternalDomains || taskURL.Host == parsedBaseURL.Host)
-		ok = ok && (taskURL.Scheme == "https" || taskURL.Scheme == "http")
-		if !ok {
-			nTasks.Done()
-			continue
-		}
-
-		// Now that all of the checks have passed, we can crawl the URL
-		hrefs, err := CrawlURL(taskURL, printedFilter, printedFilterLock)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %s\n", taskURL, err)
-			nTasks.Done()
-			continue
+			fmt.Fprintf(os.Stderr, "Error processing %s: %s\n", task.URL, err)
 		}
-
-		// Add all of the extracted links back onto the task queue
-		nTasks.Add(len(hrefs))
-		go func() {
-			for _, u := range hrefs {
-				tasks <- Task{u, task.depth - 1}
-			}
-		}()
-
-		nTasks.Done()
 	}
+}
+
+func HandleTask(
+	task *Task,
+	base *url.URL,
+	crawlExternalDomains bool,
+	tasks chan Task,
+	nTasks *sync.WaitGroup,
+	printedFilter *cuckoo.Filter,
+	printedFilterLock *sync.Mutex,
+	processedFilter *cuckoo.Filter,
+	processedFilterLock *sync.Mutex,
+) error {
+	// At the end of the function, we signal that we've completed a new task,
+	// regardless of the outcome.
+	defer nTasks.Done()
+
+	// Skip this URL if we've exceeded the maximum recursion depth
+	if task.depth < 0 {
+		return nil
+	}
+
+	// Skip this URL if we've already processed it before
+	processedFilterLock.Lock()
+	ok := processedFilter.InsertUnique([]byte(task.URL))
+	processedFilterLock.Unlock()
+	if !ok {
+		return nil
+	}
+
+	// Perform additional checks on the URL that we're about to query
+	// - Ensure that the URL domain is the same as the original domain
+	//   if crawlExternalDomains is false.
+	// - Ensure that the URL scheme is either http or https
+	taskURL, err := url.Parse(task.URL)
+	ok = (err == nil)
+	ok = ok && (crawlExternalDomains || taskURL.Host == base.Host)
+	ok = ok && (taskURL.Scheme == "https" || taskURL.Scheme == "http")
+	if !ok {
+		return err
+	}
+
+	// Now that all of the checks have passed, we can crawl the URL
+	hrefs, err := CrawlURL(taskURL, printedFilter, printedFilterLock)
+	if err != nil {
+		return err
+	}
+
+	// Add all of the extracted links back onto the task queue
+	nTasks.Add(len(hrefs))
+	go func() {
+		for _, u := range hrefs {
+			tasks <- Task{u, task.depth - 1}
+		}
+	}()
+
+	return nil
 }
 
 func RunWorkers(
